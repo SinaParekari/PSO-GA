@@ -13,6 +13,8 @@ from pso import run_pso
 from genetic_algorithm import run_ga
 from metrics import (
     compute_absolute_error,
+    compute_accuracy_score,
+    compute_coordinate_accuracy,
     compute_rmse,
     get_dimension_threshold,
     evaluate_success,
@@ -52,6 +54,9 @@ def execute_single_run(algo: str, dim: int, run_idx: int, seed: int) -> dict:
     success_primary = evaluate_success(ae, primary_threshold)
     success_fixed = evaluate_success(ae, FIXED_SUCCESS_THRESHOLD)
 
+    accuracy_score = compute_accuracy_score(ae)
+    coord_acc = compute_coordinate_accuracy(rmse)
+
     return {
         "algorithm": algo.lower(),
         "dimension": dim,
@@ -67,6 +72,8 @@ def execute_single_run(algo: str, dim: int, run_idx: int, seed: int) -> dict:
         "success_fixed": success_fixed,
         "iterations_or_generations": result["iterations"],
         "function_evaluations": result["function_evaluations"],
+        "solution_accuracy_score" : accuracy_score,
+        "coordinate_accuracy" : coord_acc,
     }
 
 

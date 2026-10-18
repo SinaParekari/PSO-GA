@@ -42,6 +42,22 @@ def get_dimension_threshold(dim: int) -> float:
     else:
         raise ValueError(f"Unsupported dimension: {dim}")
 
+def compute_accuracy_score(absolute_error: float, eps: float = 1e-16) -> float:
+    """Computes decimal precision score: -log10(AE + eps).
+
+    Higher values indicate greater precision (e.g., 6.0 means accurate up to
+    10^-6).
+    """
+    return float(-np.log10(max(absolute_error, eps)))
+
+
+def compute_coordinate_accuracy(rmse: float) -> float:
+    """Normalizes coordinate RMSE into an accuracy scale between 0.0 and 1.0.
+
+    1.0 represents exact convergence to the origin.
+    """
+    return float(1.0 / (1.0 + rmse))
+
 
 def evaluate_success(absolute_error: float, threshold: float) -> int:
     """Returns 1 if AE < threshold (strict inequality), otherwise 0."""
