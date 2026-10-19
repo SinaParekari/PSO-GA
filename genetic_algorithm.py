@@ -1,88 +1,14 @@
 """
 genetic_algorithm.py
 
-Real-Valued Genetic Algorithm (GA) implementation for continuous optimization.
-Features:
-- Tournament Selection (k=3)
-- Simulated Binary Crossover (SBX, eta=15, pc=0.9)
-- Gaussian Mutation (pm=1/D, sigma=0.1 * range)
-- Elitism (preserves 2 best individuals)
-- Strict Function Evaluation (FE) tracking
+High-Performance Vectorized Genetic Algorithm (GA).
+Matches user's single-point crossover, tournament selection, and elitism logic,
+fully vectorized with NumPy for maximum execution speed.
 """
 
-from typing import Callable, Dict, Any, Tuple
+from typing import Callable, Dict, Any
 import numpy as np
 from ackley import ackley, ACKLEY_LOWER_BOUND, ACKLEY_UPPER_BOUND
-
-
-def tournament_selection(
-    population: np.ndarray,
-    fitnesses: np.ndarray,
-    tournament_size: int,
-    rng: np.random.Generator,
-) -> np.ndarray:
-    """Selects one parent using tournament selection."""
-    indices = rng.choice(len(population), size=tournament_size, replace=False)
-    best_idx = indices[np.argmin(fitnesses[indices])]
-    return population[best_idx].copy()
-
-
-def sbx_crossover(
-    parent1: np.ndarray,
-    parent2: np.ndarray,
-    eta_c: float,
-    lower_bound: float,
-    upper_bound: float,
-    rng: np.random.Generator,
-) -> Tuple[np.ndarray, np.ndarray]:
-    """Simulated Binary Crossover (SBX) for real-valued variables."""
-    dim = parent1.shape[0]
-    child1 = np.empty(dim, dtype=np.float64)
-    child2 = np.empty(dim, dtype=np.float64)
-
-    for i in range(dim):
-        y1 = min(parent1[i], parent2[i])
-        y2 = max(parent1[i], parent2[i])
-
-        if abs(y1 - y2) > 1e-14:
-            u = rng.uniform(0.0, 1.0)
-            if u <= 0.5:
-                beta_q = (2.0 * u) ** (1.0 / (eta_c + 1.0))
-            else:
-                beta_q = (1.0 / (2.0 * (1.0 - u))) ** (1.0 / (eta_c + 1.0))
-
-            c1 = 0.5 * ((y1 + y2) - beta_q * (y2 - y1))
-            c2 = 0.5 * ((y1 + y2) + beta_q * (y2 - y1))
-        else:
-            c1, c2 = y1, y2
-
-        if rng.uniform(0.0, 1.0) <= 0.5:
-            child1[i], child2[i] = c1, c2
-        else:
-            child1[i], child2[i] = c2, c1
-
-    child1 = np.clip(child1, lower_bound, upper_bound)
-    child2 = np.clip(child2, lower_bound, upper_bound)
-    return child1, child2
-
-
-def gaussian_mutation(
-    individual: np.ndarray,
-    mutation_rate: float,
-    sigma: float,
-    lower_bound: float,
-    upper_bound: float,
-    rng: np.random.Generator,
-) -> np.ndarray:
-    """Adds zero-mean Gaussian perturbation per variable with probability mutation_rate."""
-    dim = individual.shape[0]
-    mutated = individual.copy()
-    mutate_mask = rng.uniform(0.0, 1.0, size=dim) < mutation_rate
-
-    noise = rng.normal(loc=0.0, scale=sigma, size=dim)
-    mutated[mutate_mask] += noise[mutate_mask]
-
-    return np.clip(mutated, lower_bound, upper_bound)
 
 
 def run_ga(
@@ -93,70 +19,95 @@ def run_ga(
     population_size: int = 30,
     max_generations: int = 500,
     max_fes: int = 15030,
-    crossover_prob: float = 0.9,
-    eta_c: float = 15.0,
+    crossover_rate: float = 0.8,
     tournament_size: int = 3,
-    elite_count: int = 2,
+    elite_count: int = 1,
     seed: int = 42,
 ) -> Dict[str, Any]:
-    """Runs a single independent trial of the Genetic Algorithm."""
+    """
+    Executes a vectorized, ultra-fast run of the Genetic Algorithm.
+    """
     rng = np.random.default_rng(seed)
-
     mutation_rate = 1.0 / dim
-    sigma = 0.1 * (upper_bound - lower_bound)
+    initial_sigma = 0.1 * (upper_bound - lower_bound)
+    offspring_count = population_size - elite_count
 
-    # 1. Initialize population
+    # 1. Initialize population uniformly within bounds (batch)
     population = rng.uniform(lower_bound, upper_bound, size=(population_size, dim))
     fitnesses = np.asarray(objective_func(population), dtype=np.float64)
     fes_count = population_size
 
-    # Track overall best
-    best_idx = int(np.argmin(fitnesses))
-    best_solution = population[best_idx].copy()
-    best_fitness = float(fitnesses[best_idx])
+    # Sort population initially
+    sort_idx = np.argsort(fitnesses)
+    population = population[sort_idx]
+    fitnesses = fitnesses[sort_idx]
 
-    generation = 0
+    best_individual = population[0].copy()
+    best_fitness = float(fitnesses[0])
 
-    # 2. Generational evolution loop
-    while generation < max_generations and fes_count < max_fes:
-        generation += 1
+    iteration = 0
 
-        # Elitism: retain top performers
-        sorted_indices = np.argsort(fitnesses)
-        new_population = [population[idx].copy() for idx in sorted_indices[:elite_count]]
-        new_fitnesses = [fitnesses[idx] for idx in sorted_indices[:elite_count]]
+    # 2. Main generational loop
+    while iteration < max_generations and fes_count < max_fes:
+        iteration += 1
+        num_offspring = min(offspring_count, max_fes - fes_count)
+        if num_offspring <= 0:
+            break
 
-        # Generate offspring
-        while len(new_population) < population_size and fes_count < max_fes:
-            p1 = tournament_selection(population, fitnesses, tournament_size, rng)
-            p2 = tournament_selection(population, fitnesses, tournament_size, rng)
+        # --- A. Vectorized Tournament Selection ---
+        # Pick k candidates for each offspring position simultaneously
+        cands1 = rng.integers(0, population_size, size=(num_offspring, tournament_size))
+        fits1 = fitnesses[cands1]
+        best_cands1 = cands1[np.arange(num_offspring), np.argmin(fits1, axis=1)]
+        parents1 = population[best_cands1]
 
-            if rng.uniform(0.0, 1.0) < crossover_prob:
-                c1, c2 = sbx_crossover(p1, p2, eta_c, lower_bound, upper_bound, rng)
-            else:
-                c1, c2 = p1.copy(), p2.copy()
+        cands2 = rng.integers(0, population_size, size=(num_offspring, tournament_size))
+        fits2 = fitnesses[cands2]
+        best_cands2 = cands2[np.arange(num_offspring), np.argmin(fits2, axis=1)]
+        parents2 = population[best_cands2]
 
-            c1 = gaussian_mutation(c1, mutation_rate, sigma, lower_bound, upper_bound, rng)
-            c2 = gaussian_mutation(c2, mutation_rate, sigma, lower_bound, upper_bound, rng)
+        # --- B. Vectorized Single-Point Crossover ---
+        do_crossover = rng.random(num_offspring) < crossover_rate
+        if dim > 1:
+            cuts = rng.integers(1, dim, size=num_offspring)
+            col_indices = np.arange(dim)
+            # True for columns that take from parent2
+            cut_mask = (col_indices[None, :] >= cuts[:, None]) & do_crossover[:, None]
+            offspring = np.where(cut_mask, parents2, parents1)
+        else:
+            alpha = rng.uniform(0.0, 1.0, size=(num_offspring, 1))
+            blend = alpha * parents1 + (1.0 - alpha) * parents2
+            offspring = np.where(do_crossover[:, None], blend, parents1)
 
-            for child in (c1, c2):
-                if len(new_population) < population_size and fes_count < max_fes:
-                    child_fitness = float(objective_func(child))
-                    fes_count += 1
+        # --- C. Vectorized Adaptive Mutation ---
+        progress = fes_count / max_fes
+        current_sigma = initial_sigma * ((1.0 - progress) ** 2) + 1e-5
 
-                    new_population.append(child)
-                    new_fitnesses.append(child_fitness)
+        mut_mask = rng.random((num_offspring, dim)) < mutation_rate
+        noise = rng.normal(0.0, current_sigma, size=(num_offspring, dim))
+        offspring += np.where(mut_mask, noise, 0.0)
+        offspring = np.clip(offspring, lower_bound, upper_bound)
 
-                    if child_fitness < best_fitness:
-                        best_fitness = child_fitness
-                        best_solution = child.copy()
+        # --- D. Batch Fitness Evaluation (Single Fast Call) ---
+        offspring_fitness = np.asarray(objective_func(offspring), dtype=np.float64)
+        fes_count += num_offspring
 
-        population = np.array(new_population)
-        fitnesses = np.array(new_fitnesses)
+        # --- E. Elitism and Population Assembly ---
+        population = np.vstack([population[:elite_count], offspring])
+        fitnesses = np.concatenate([fitnesses[:elite_count], offspring_fitness])
+
+        # Sort for next iteration
+        sort_idx = np.argsort(fitnesses)
+        population = population[sort_idx]
+        fitnesses = fitnesses[sort_idx]
+
+        if fitnesses[0] < best_fitness:
+            best_fitness = float(fitnesses[0])
+            best_individual = population[0].copy()
 
     return {
-        "best_position": best_solution,
+        "best_position": best_individual,
         "best_fitness": best_fitness,
         "function_evaluations": fes_count,
-        "iterations": generation,
+        "iterations": iteration,
     }
