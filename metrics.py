@@ -36,9 +36,9 @@ def get_dimension_threshold(dim: int) -> float:
     if dim in [1, 2, 3]:
         return 0.001
     elif dim in [5, 10, 20]:
-        return 0.003
+        return 0.004
     elif dim in [30, 40, 50]:
-        return 0.01
+        return 0.05
     else:
         raise ValueError(f"Unsupported dimension: {dim}")
 
